@@ -600,11 +600,23 @@ mod tests {
     use crate::*;
     use futures_util::FutureExt;
     use rand::rngs::OsRng;
+    use rand::SeedableRng as _;
     use rand::TryRngCore as _;
+    use rand_chacha::ChaCha20Rng;
+
+    /// Fixed seed used by the message-size comparison so that sizes are
+    /// byte-for-byte reproducible across runs (random key/registration IDs are
+    /// protobuf varint-encoded, so their values affect the serialized length).
+    const SIZE_TEST_SEED: [u8; 32] = [0x53; 32]; // 'S'
+
+    /// Fixed timestamp for the message-size comparison, for the same reason.
+    fn size_test_time() -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(1605722925)
+    }
 
     fn create_sender_cert(
         identity_key: PublicKey,
-        rng: &mut rand_core::UnwrapErr<OsRng>,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> Result<SenderCertificate> {
         let trust_root = KeyPair::generate(rng);
         let server_key = KeyPair::generate(rng);
@@ -629,11 +641,12 @@ mod tests {
 
     fn create_prekey_bundle(
         store: &mut InMemSignalProtocolStore,
-        rng: &mut rand_core::UnwrapErr<OsRng>,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> Result<PreKeyBundle> {
         let pre_key_pair = KeyPair::generate(rng);
         let signed_pre_key_pair = KeyPair::generate(rng);
         let kyber_pre_key_pair = kem::KeyPair::generate(kem::KeyType::Kyber1024, rng);
+        // (generic rng for deterministic size measurement; see SIZE_TEST_SEED)
 
         let identity_key_pair = store
             .get_identity_key_pair()
@@ -1321,7 +1334,9 @@ mod tests {
     #[test]
     fn test_compare_message_sizes() -> Result<()> {
         async {
-            let mut rng = OsRng.unwrap_err();
+            // Seeded RNG + fixed timestamp so the reported sizes are
+            // byte-for-byte reproducible (see SIZE_TEST_SEED).
+            let mut rng = ChaCha20Rng::from_seed(SIZE_TEST_SEED);
 
             {
                 let mut alice_store = InMemSignalProtocolStore::new(
@@ -1379,7 +1394,7 @@ mod tests {
                     &bob_address,
                     &mut alice_store.session_store,
                     &mut alice_store.identity_store,
-                    std::time::SystemTime::now(),
+                    size_test_time(),
                     &mut rng,
                 )
                 .await?;
@@ -1451,7 +1466,7 @@ mod tests {
                     &mut alice_store.session_store,
                     &mut alice_store.identity_store,
                     &bob_bundle,
-                    std::time::SystemTime::now(),
+                    size_test_time(),
                     &mut rng,
                 )
                 .await?;
@@ -1465,7 +1480,7 @@ mod tests {
                     &bob_address,
                     &mut alice_store.session_store,
                     &mut alice_store.identity_store,
-                    std::time::SystemTime::now(),
+                    size_test_time(),
                     &mut rng,
                 )
                 .await?;

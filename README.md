@@ -37,9 +37,11 @@ used to isolate XHMQV's contribution.
 
 | Paper column | Value | Where in output |
 |---|---|---|
-| SS+PQXDH | 2146 B | `Sealed Sender v1 total` |
+| SS+PQXDH | 2147 B | `Sealed Sender v1 total` |
 | Sealed PQXDH | 2048 B | `SPQXDH total (with DR message)` |
 | Hybrid | 5695 B | `Sealed RingXKEM-XHMQV … TOTAL` **+ 625** (see note) |
+
+Sealed PQXDH saves **99 bytes (4.6%)** over SS+PQXDH. 
 
 **Computation time (Table: session establishment time, µs).** Encrypt / Decrypt
 / Round-trip rows map to the `session_establish_encrypt` and
