@@ -1,0 +1,3 @@
+target/
+models/proverif/*.gen.pv
+!models/proverif/.gen.pv

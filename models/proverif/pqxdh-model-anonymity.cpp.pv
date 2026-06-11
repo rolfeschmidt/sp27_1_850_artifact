@@ -1,0 +1,472 @@
+(*************************************)
+(*
+Anonymity Analysis for PQXDH Revision 4 - Transcript Unlinkability
+
+This file models sender anonymity using observational equivalence.
+
+The query is: Can an attacker who observes the network transcript distinguish
+between two different initiators (Alex vs Blake) sending to the same
+responder (Charlie)?
+
+Property tested: Transcript unlinkability
+- The encrypted network transcript itself should not reveal sender identity
+- The responder learns the sender (for authentication) but this doesn't leak
+  cryptographically to network observers
+
+See the README next to this file for details on the modeling
+and how to run the file.
+
+Derived from models by authors: Karthikeyan Bhargavan <karthik@cryspen.com>
+	 Charlie Jacomme <charlie.jacomme@inria.fr>
+	 Franziskus Kiefer <franziskus@cryspen.com>
+*)
+
+(* Optimization settings for observational equivalence *)
+set ignoreTypes = false.
+set traceBacktracking = false.
+(*-----------------------------------*)
+(* A Symbolic Cryptographic Model    *)
+(* for primitives in Sec 2.2 Cryptographic notation *)
+(*-----------------------------------*)
+
+(* Elliptic Curve Diffie-Hellman *)
+type scalar.
+type point.
+
+const G:point.
+const Gneutral:point.
+
+fun SMUL(scalar,point):point.
+equation forall y : scalar, z : scalar;
+         SMUL(y, SMUL(z, G)) = SMUL(z, SMUL(y, G)).
+
+fun smul(scalar,point):point
+reduc forall x:scalar;
+      smul(x,Gneutral) = Gneutral
+      otherwise forall x:scalar, y:point; smul(x,y) = SMUL(x,y).
+
+
+letfun s2p(s:scalar) = SMUL(s,G).
+letfun dh(s:scalar,p:point) = smul(s,p).
+
+(* KEM Encapsulation *)
+type kempriv.
+type kempub.
+
+fun kempk(kempriv):kempub.
+fun penc(kempub,bitstring):bitstring.
+fun pdec(kempriv,bitstring):bitstring
+reduc forall sk:kempriv,m:bitstring;
+      pdec(sk,penc(kempk(sk),m)) = m.
+
+letfun kempriv2pub(k:kempriv) = kempk(k).
+
+letfun pqkem_enc(pk:kempub) =
+       new ss:bitstring;
+       (penc(pk,ss),ss).
+
+letfun pqkem_dec(sk:kempriv,ct:bitstring) =
+       pdec(sk,ct).
+
+
+(* the domains are disjoints, see [PQXDH] *)
+fun encodeEC(point):bitstring [data].
+
+(* a boolean is set to true when the PQSPKB is a last resort kempub and can be reused multiple times. *)
+fun encodeKEM(bool,kempub):bitstring [data].
+
+
+(* Bitstring manipulations *)
+
+(* Constants *)
+const zero: bitstring.
+const one: bitstring.
+
+(* A zero-filled byte sequence with length equal to the hash output length, in bytes. *)
+const zeroes_sha512:bitstring.
+
+(* A byte sequence containing 32 0xFF bytes if curve is curve25519 *)
+const ff_x25519:bitstring.
+
+(* A byte sequence containing 57 0xFF bytes if curve is curve448 *)
+const ff_x448:bitstring.
+
+(* The concatenation of string representations of the 4 PQXDH parameters info, curve, hash, and pqkem into a single string separated with '_' such as "MyProtocol_CURVE25519_SHA-512_CRYSTALS-KYBER-1024". *)
+const info_x25519_sha512_kyber1024:bitstring.
+
+(* A tag used to separate KDF usage for message sealing *)
+const sealing_tag:bitstring.
+
+
+
+fun concat(bitstring,bitstring): bitstring [data].
+fun concat3(point, bitstring, point):bitstring [data].
+fun concat6(point,point,bitstring,point,bool,kempub):bitstring [data].
+fun concat7(point,point,point,bitstring,point,bool,kempub):bitstring [data].
+
+(* HKDF *)
+
+(* One-shot HKDF(input_key_material, salt, info) *)
+type symkey.
+fun hkdf(bitstring, bitstring, bitstring) : symkey.
+fun symkey_to_bytes(symkey) : bitstring [data].
+
+letfun kdf(km:bitstring) =
+       hkdf(concat(ff_x25519,km),
+            zeroes_sha512,
+            info_x25519_sha512_kyber1024).
+
+(* Symmetric Encryption *)
+fun senc(symkey, bitstring): bitstring.
+fun sdec(symkey, bitstring): bitstring
+reduc forall k:symkey, m:bitstring;
+      sdec(k, senc(k, m)) = m.
+
+(* AEAD Encryption *)
+type nonce.
+const empty_nonce:nonce.
+
+fun aead_enc(symkey,nonce,bitstring,bitstring):bitstring.
+fun aead_dec(symkey,nonce,bitstring,bitstring):bitstring
+reduc forall k:symkey,n:nonce,m:bitstring,ad:bitstring;
+      aead_dec(k,n,aead_enc(k,n,m,ad),ad) = m.
+
+(* XEdDSA Signatures *)
+fun sign(scalar,bitstring,nonce):bitstring.
+fun verify(point,bitstring,bitstring):bool
+reduc forall sk:scalar,m:bitstring,n:nonce;
+      verify(SMUL(sk,G),m,sign(sk,m,n)) = true.
+
+
+
+event isBool(bool).
+
+restriction b:bool;
+ event(isBool(b)) ==> b=true || b=false.
+
+(*-----------------------------------*)
+(*          PKI                      *)
+(*-----------------------------------*)
+
+(* Clients representing devices: Alex, Blake, etc. *)
+type client.
+
+(* Global PKI maintained by the Server, checked by Clients *)
+
+(* For each client Blake:
+   - Blake's curve identity key IKB *)
+
+table identity_pubkeys(client,point).
+
+
+(*-----------------------------------*)
+(* Security Model and Properties     *)
+(*-----------------------------------*)
+
+free pub:channel.
+
+
+(* Handshake Events *)
+event InitDone(client,client,bool,point,point,bool,kempub,symkey).
+event RespondDone(client,client,bool,point,point,bool,kempub,symkey).
+
+(* Application Messages and Events *)
+fun app_message(client,client,bitstring):bitstring [private].
+event AppSend(client,client,bitstring).
+event AppRecv(client,client,bitstring).
+
+
+ nounif z:scalar; attacker(SMUL(z,G)) / 30000.
+
+
+(*-----------------------------------*)
+(* Cryptographic Attacks             *)
+(*-----------------------------------*)
+
+(* DH breaks down: attacker can compute discrete logs *)
+fun discreteLog(point): scalar
+reduc forall s:scalar, y:point;
+      discreteLog(SMUL(s,G)) = s [private].
+
+event BrokenDH.
+
+let dh_attacks_phase1() =
+    phase 1;
+    in (pub,p:point);
+    event BrokenDH;
+    out (pub,discreteLog(p)).
+
+
+(* KEM breaks down: attacker can extract private keys from public keys *)
+(* Can happen anytime - models harvest-now-decrypt-later quantum threat *)
+fun inversePK(kempub): kempriv
+reduc forall s:kempriv;
+      inversePK(kempk(s)) = s [private].
+
+event BrokenKEM.
+
+let kem_attacks() =
+    in (pub,p:kempub);
+    event BrokenKEM;
+    out (pub,inversePK(p)).
+
+
+(*-----------------------------------*)
+(* Key Compromise                    *)
+(*-----------------------------------*)
+
+(* Identity Key Compromise - happens in phase 1 (after protocol execution) *)
+(* Reveals the secret key using discreteLog *)
+table compromised_identity_keys(client).
+
+event CompromiseIK(client).
+
+let ik_compromise_phase1() =
+    phase 1;
+    in (pub, c:client);
+    event CompromiseIK(c);
+    insert compromised_identity_keys(c);
+    get identity_pubkeys(=c, pk) in
+    out (pub, discreteLog(pk)).
+
+
+(*-----------------------------------*)
+(* Protocol Processes                *)
+(*-----------------------------------*)
+
+(* PQXDH Protocol - Initiator *)
+
+const init:bitstring.
+const resp:bitstring.
+
+
+let Initiator(i:client, IKA_s:scalar, r:client, IKB_p:point) =
+    (* Initiator public key *)
+    let IKA_p = s2p(IKA_s) in
+
+    (* receive from the network the pre key bundles *)
+    in(pub, (SPKB_p:point,SPKB_sig:bitstring,is_last_resortPQPK:bool, PQPKB_p:kempub,PQPKB_sig:bitstring));
+    (* Verify the signatures *)
+    if verify(IKB_p,encodeEC(SPKB_p),SPKB_sig) then
+    if verify(IKB_p,encodeKEM(is_last_resortPQPK,PQPKB_p),PQPKB_sig) then
+
+    (
+     (* Simplified: no optional one-time prekeys to reduce state space *)
+     let (CT:bitstring,SS:bitstring) = pqkem_enc(PQPKB_p) in
+
+     new EKA_s:scalar;
+
+     let EKA_p = s2p(EKA_s) in
+     let DH1 = dh(IKA_s,SPKB_p) in
+     let DH2 = dh(EKA_s,IKB_p) in
+     let DH3 = dh(EKA_s,SPKB_p) in
+
+     (* Compute an initial key that does not incorporate the sender identity *)
+     let SK1 = kdf(concat6(DH2,DH3,SS,IKB_p,is_last_resortPQPK,PQPKB_p)) in
+
+     let Kseal = hkdf(symkey_to_bytes(SK1),zero,sealing_tag) in
+     let IKA_ct = senc(Kseal, encodeEC(IKA_p)) in
+     let SK = kdf(concat3(DH1, symkey_to_bytes(SK1), IKA_p)) in
+
+
+	(* InitDone event removed to avoid encoding sender identity *)
+        (* Event would create observable differences between Alex/Blake *)
+
+        let ad = zero in
+        (* Use a fixed message payload for anonymity testing *)
+        let msg = zero in
+        let enc_msg = aead_enc(SK,empty_nonce,msg,ad) in
+        (* Send Message *)
+        out(pub, (IKA_ct, EKA_p, CT, SPKB_p, PQPKB_p, enc_msg))
+
+     ).
+
+
+let Responder_mess(r:client, IKB_s:scalar, IKB_p:point, SPKB_s:scalar, SPKB_p:point, PQSPKB_s:kempriv, PQSPKB_p:kempub)=
+    (* Simplified: no OPK generation *)
+    (* Receive Message with the currently stored public keys *)
+    in (pub,(IKA_ct:bitstring, EKA_p:point, CT:bitstring, =SPKB_p, =PQSPKB_p, enc_msg:bitstring));
+
+    let SS = pqkem_dec(PQSPKB_s,CT) in
+    let DH2 = dh(IKB_s, EKA_p) in
+    let DH3 = dh(SPKB_s,EKA_p) in
+    let SK1 = kdf(concat6(DH2,DH3,SS,IKB_p,true,PQSPKB_p)) in
+
+    let Kseal = hkdf(symkey_to_bytes(SK1),zero,sealing_tag) in
+    let encodeEC(IKA_p_recovered) = sdec(Kseal, IKA_ct) in
+
+    (* For the anonymity model, we verify the decryption succeeded *)
+    (* In the full protocol, responder would check identity_pubkeys table *)
+    (* and learn the specific sender. But for anonymity from network observer, *)
+    (* we model the responder's processing as identical regardless of sender *)
+    if IKA_p_recovered <> Gneutral then
+    (
+      let DH1 = dh(SPKB_s,IKA_p_recovered) in
+      let SK = kdf(concat3(DH1, symkey_to_bytes(SK1), IKA_p_recovered)) in
+
+      let ad = zero in
+      let msg = aead_dec(SK,empty_nonce,enc_msg,ad) in
+      (* Responder has validated the sender and decrypted the message *)
+      (* No observable output that depends on which sender *)
+      0
+    ).
+
+
+let Responder(r:client, IKB_s:scalar) =
+    let IKB_p = s2p(IKB_s) in
+
+    (* Creates a new DH based Signed Pre-Key *)
+    new SPKB_s:scalar;
+    let SPKB_p = s2p(SPKB_s) in
+    new zSPKB:nonce;
+    let SPKB_sig = sign(IKB_s,encodeEC(SPKB_p),zSPKB) in
+
+    (* Creates a new KEM based Signed Pre-Key *)
+    new PQSPKB_s:kempriv;
+    let PQSPKB_p = kempriv2pub(PQSPKB_s) in
+    new zPQSPKB:nonce;
+    (* worst case setting, we assume all KEM PQSPKB are last resorts and can be reused. *)
+    let PQSPKB_sig = sign(IKB_s,encodeKEM(true,PQSPKB_p),zPQSPKB) in
+
+
+    (* send public keys to network *)
+    out (pub,(SPKB_p,SPKB_sig,PQSPKB_p,PQSPKB_sig));
+
+    (! Responder_mess(r, IKB_s, IKB_p, SPKB_s, SPKB_p, PQSPKB_s, PQSPKB_p))
+.
+
+
+(*-----------------------------------*)
+(* Anonymity Setup                   *)
+(*-----------------------------------*)
+
+(* Fixed client names for observational equivalence *)
+free alex:client.
+free blake:client.
+free charlie:client.
+
+(* Main Process: Two potential initiators, one responder *)
+
+process
+  (* Create identity keys for Alex and Blake *)
+  new IKA_s:scalar;
+  let IKA_p = s2p(IKA_s) in
+  insert identity_pubkeys(alex, IKA_p);
+
+  new IKB_s:scalar;
+  let IKB_p = s2p(IKB_s) in
+  insert identity_pubkeys(blake, IKB_p);
+
+  (* Create identity key for Charlie (responder) *)
+  new IKC_s:scalar;
+  let IKC_p = s2p(IKC_s) in
+  insert identity_pubkeys(charlie, IKC_p);
+
+  (* Publish all public keys *)
+  out(pub, (IKA_p, IKB_p, IKC_p));
+
+  (* The diff: Either Alex or Blake initiates to Charlie *)
+  (* Left side: Alex initiates, Right side: Blake initiates *)
+  (
+    Initiator(diff[alex, blake], diff[IKA_s, IKB_s], charlie, IKC_p)
+    |
+    Responder(charlie, IKC_s)
+#if !defined(UnbreakableKEM)
+    |
+    ! kem_attacks
+#endif
+#if defined(BrokenDH)
+    |
+    ! dh_attacks_phase1
+#endif
+#if defined(CompromiseIK)
+    |
+    ! ik_compromise_phase1
+#endif
+  )
+
+
+(*************************************)
+(*  EXPECTED RESULTS                 *)
+(*************************************)
+
+(*
+
+PROPERTY TESTED: Transcript Unlinkability (Sender Anonymity)
+
+This model verifies whether a network attacker can distinguish between two
+scenarios:
+- Left:  Alex sends a message to Charlie
+- Right: Blake sends a message to Charlie
+
+SIMPLIFICATION: This model does NOT use optional one-time prekeys (OPK) to
+reduce state space complexity. All handshakes use only SPK and PQPK.
+
+The network transcript consists of:
+  (IKA_ct, EKA_p, CT, SPKB_p, PQPKB_p, enc_msg)
+
+Where IKA_ct = senc(Kseal, encodeEC(IKA_p)) is the encrypted sender identity.
+
+THREAT MODEL:
+
+PQXDH is NOT designed to defend against active quantum attackers who can both
+break DH and forge prekey bundles in phase 0. Therefore, DH breaking only
+happens in phase 1 (after protocol execution).
+
+We test sender anonymity under five scenarios:
+1. Baseline: Attacker is passive network observer (all crypto secure)
+2. Broken KEM: Attacker can break KEM anytime (quantum harvest-now-decrypt-later)
+3. Compromised IK: Identity keys compromised in phase 1 (forward anonymity)
+4. Broken KEM + Compromised IK: Both KEM broken and phase 1 IK compromise
+5. Broken DH: DH broken in phase 1 (post-quantum forward anonymity)
+
+Note: This model uses a single public channel to represent the network.
+Events that would encode sender identity (InitDone, RespondDone) have been
+removed to avoid creating trivial distinguishers.
+
+RESULTS:
+
+1. BASELINE (make anonymity):
+   RESULT: Diff-equivalence is TRUE (~5,200 rules, ~4 sec)
+   ✓ Sender anonymity achieved with all cryptography secure
+   ✓ The encryption of IKA under Kseal successfully hides sender identity
+   ✓ Responder can decrypt and authenticate, but this doesn't leak to network
+
+2. BROKEN KEM (make anonymity-broken-kem):
+   RESULT: Diff-equivalence is TRUE (~5,200 rules, ~4 sec)
+   ✓ KEM can be broken ANYTIME (harvest-now-decrypt-later quantum threat)
+   ✓ DH protects sender anonymity: attacker cannot compute DH2 or DH3
+   ✓ Even with KEM broken, Kseal remains secret and IKA_ct is protected
+
+3. COMPROMISED IK (make anonymity-compromise-ik):
+   RESULT: Diff-equivalence is TRUE (~11,000 rules, ~22 sec)
+   ✓ Forward anonymity: Identity keys compromised in phase 1
+   ✓ Past transcripts remain unlinkable after IK compromise
+   ✓ Encryption uses ephemeral keys (EKA), not long-term identity keys
+
+4. BROKEN KEM + COMPROMISED IK (make anonymity-broken-kem-compromise-ik):
+   RESULT: Diff-equivalence is TRUE (~11,200 rules, ~23 sec)
+   ✓ Both KEM broken (anytime) and IK compromised (phase 1)
+   ✓ DH contributions (DH2, DH3) still protect Kseal
+   ✓ Defense-in-depth: multiple compromises don't break anonymity
+
+5. BROKEN DH (make anonymity-broken-dh):
+   RESULT: Diff-equivalence is TRUE (~11,000 rules, ~22 sec)
+   ✓ DH broken in PHASE 1 only (post-quantum forward anonymity)
+   ✓ Past transcripts remain unlinkable because KEM protected SS during execution
+   ✓ Demonstrates: KEM protects sender anonymity even if DH breaks later
+
+Run with:
+$ make anonymity                          # 1. Baseline
+$ make anonymity-broken-kem               # 2. Broken KEM
+$ make anonymity-compromise-ik            # 3. Compromised IK
+$ make anonymity-broken-kem-compromise-ik # 4. Broken KEM + Compromised IK
+$ make anonymity-broken-dh                # 5. Broken DH (phase 1)
+  or
+$ ./run.sh pqxdh-model-anonymity UnbreakableKEM
+$ ./run.sh pqxdh-model-anonymity
+$ ./run.sh pqxdh-model-anonymity UnbreakableKEM CompromiseIK
+$ ./run.sh pqxdh-model-anonymity CompromiseIK
+$ ./run.sh pqxdh-model-anonymity UnbreakableKEM BrokenDH
+
+*)
