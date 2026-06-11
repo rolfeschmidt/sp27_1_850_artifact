@@ -59,7 +59,7 @@ signature (666 B) and **conservatively estimate** the ring-signature overhead:
 
 - **Size:** the paper adds **625 bytes** to the implemented hybrid message. The
   `test_size_breakdown` output reports the *raw* implemented size (one Falcon
-  signature), which is therefore ~625 B smaller than the 5695 B in the table.
+  signature) — **5070 B** — so the paper's **5695 B** = 5070 + 625.
 - **Timing:** the benchmarks already perform **two** Falcon
   signatures/verifications per session to model the ring-signature cost (see the
   "second, unused Falcon" steps in `src/sealed_ringxkem_xhmqv.rs` and

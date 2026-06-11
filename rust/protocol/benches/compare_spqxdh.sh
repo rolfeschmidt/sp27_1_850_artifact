@@ -48,7 +48,7 @@ SPQXDH_DEC=$(echo "$BENCH_OUTPUT" | grep -A4 "spqxdh/session_establish_decrypt" 
 
 # Calculate derived values
 SIZE_SAVINGS=$((SS_V1_TOTAL - SPQXDH_TOTAL))
-SIZE_SAVINGS_PCT=$(echo "scale=1; $SIZE_SAVINGS * 100 / $SS_V1_TOTAL" | bc)
+SIZE_SAVINGS_PCT=$(awk "BEGIN {printf \"%.1f\", $SIZE_SAVINGS * 100 / $SS_V1_TOTAL}")
 SPQXDH_KEY_MATERIAL=$((SPQXDH_EC + SPQXDH_KEM))
 
 PQXDH_TIME_TOTAL=$(echo "$PQXDH_ENC + $PQXDH_DEC" | bc)
@@ -100,7 +100,7 @@ echo ""
 SR_EC=$(echo "$SR_SIZE_OUTPUT" | awk '/Ephemeral \(ristretto\):/ {print $3}')
 SR_CT1=$(echo "$SR_SIZE_OUTPUT" | awk '/KEM ct1:/ {print $3}')
 SR_CT2=$(echo "$SR_SIZE_OUTPUT" | awk '/KEM ct2:/ {print $3}')
-SR_INNER=$(echo "$SR_SIZE_OUTPUT" | awk -F'[ :()]' '/Inner total:/ {print $4}')
+SR_INNER=$(echo "$SR_SIZE_OUTPUT" | awk '/Inner total:/ {print $3}')
 SR_MAC=$(echo "$SR_SIZE_OUTPUT" | awk '/MAC:/ {print $2}')
 SR_TOTAL=$(echo "$SR_SIZE_OUTPUT" | awk '/TOTAL:/ {print $2}')
 
@@ -141,7 +141,7 @@ echo ""
 SRX3DH_EC=$(echo "$SRX3DH_SIZE_OUTPUT" | awk '/Ephemeral \(x25519\):/ {print $3}')
 SRX3DH_CT1=$(echo "$SRX3DH_SIZE_OUTPUT" | awk '/KEM ct1:/ {print $3}')
 SRX3DH_CT2=$(echo "$SRX3DH_SIZE_OUTPUT" | awk '/KEM ct2:/ {print $3}')
-SRX3DH_INNER=$(echo "$SRX3DH_SIZE_OUTPUT" | awk -F'[ :()]' '/Inner total:/ {print $4}')
+SRX3DH_INNER=$(echo "$SRX3DH_SIZE_OUTPUT" | awk '/Inner total:/ {print $3}')
 SRX3DH_MAC=$(echo "$SRX3DH_SIZE_OUTPUT" | awk '/MAC:/ {print $2}')
 SRX3DH_TOTAL=$(echo "$SRX3DH_SIZE_OUTPUT" | awk '/TOTAL:/ {print $2}')
 
